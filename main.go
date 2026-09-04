@@ -129,87 +129,181 @@ func main() {
 		// NeoShowcaseのHard認証によって付与されるヘッダー
 		traqID := r.Header.Get("X-Showcase-User")
 
-		// --- POST: スタンプの登録 ---
+		// =========================
+		// POST: スタンプの登録
+		// =========================
 		if r.Method == http.MethodPost {
-			if err := r.ParseForm(); err == nil {
-				stampName := strings.Trim(r.FormValue("stamp_name"), ":")
+			if err := r.ParseForm(); err != nil {
+				log.Printf("Failed to parse form: %v", err)
 
+				http.Redirect(
+					w,
+					r,
+					"/?status=error",
+					http.StatusSeeOther,
+				)
+				return
+			}
+
+			// 前後の空白と「:」を取り除く
+			stampName := strings.TrimSpace(
+				strings.Trim(r.FormValue("stamp_name"), ":"),
+			)
+
+			log.Printf(
+				"Received registration request from user:%s for stamp:%s",
+				traqID,
+				stampName,
+			)
+
+			// スタンプ名からUUIDを取得
+			stampID, ok := getStampID(stampName)
+
+			if !ok {
 				log.Printf(
-					"Received registration request from user:%s for stamp:%s",
-					traqID,
+					"Stamp:%s not found in cache",
 					stampName,
 				)
 
-				stampID, ok := getStampID(stampName)
-				if !ok {
-					log.Printf(
-						"Stamp:%s not found in cache",
-						stampName,
-					)
-				} else {
-					var count int64
-
-					if err := db.Model(&UserStamp{}).
-						Where(
-							"traq_id = ? AND stamp_id = ?",
-							traqID,
-							stampID,
-						).
-						Count(&count).Error; err != nil {
-						log.Printf(
-							"Failed to check existing stamp registration: %v",
-							err,
-						)
-					} else if count == 0 {
-						record := &UserStamp{
-							TraqID:  traqID,
-							StampID: stampID,
-						}
-
-						if err := db.Create(record).Error; err != nil {
-							log.Printf(
-								"Failed to register stamp:%s for user:%s: %v",
-								stampName,
-								traqID,
-								err,
-							)
-						} else {
-							log.Printf(
-								"Successfully registered stamp:%s (ID:%s) for user:%s",
-								stampName,
-								stampID,
-								traqID,
-							)
-						}
-					} else {
-						log.Printf(
-							"Stamp:%s is already registered for user:%s",
-							stampName,
-							traqID,
-						)
-					}
-				}
-			} else {
-				log.Printf("Failed to parse form: %v", err)
+				// エラーメッセージを表示
+				http.Redirect(
+					w,
+					r,
+					"/?status=not_found",
+					http.StatusSeeOther,
+				)
+				return
 			}
 
-			http.Redirect(w, r, "/", http.StatusSeeOther)
+			// すでに登録されているか確認
+			var count int64
+
+			if err := db.Model(&UserStamp{}).
+				Where(
+					"traq_id = ? AND stamp_id = ?",
+					traqID,
+					stampID,
+				).
+				Count(&count).Error; err != nil {
+
+				log.Printf(
+					"Failed to check existing stamp registration: %v",
+					err,
+				)
+
+				http.Redirect(
+					w,
+					r,
+					"/?status=error",
+					http.StatusSeeOther,
+				)
+				return
+			}
+
+			// すでに登録済み
+			if count > 0 {
+				log.Printf(
+					"Stamp:%s is already registered for user:%s",
+					stampName,
+					traqID,
+				)
+
+				http.Redirect(
+					w,
+					r,
+					"/?status=already",
+					http.StatusSeeOther,
+				)
+				return
+			}
+
+			// 登録
+			record := &UserStamp{
+				TraqID:  traqID,
+				StampID: stampID,
+			}
+
+			if err := db.Create(record).Error; err != nil {
+				log.Printf(
+					"Failed to register stamp:%s for user:%s: %v",
+					stampName,
+					traqID,
+					err,
+				)
+
+				http.Redirect(
+					w,
+					r,
+					"/?status=error",
+					http.StatusSeeOther,
+				)
+				return
+			}
+
+			log.Printf(
+				"Successfully registered stamp:%s (ID:%s) for user:%s",
+				stampName,
+				stampID,
+				traqID,
+			)
+
+			http.Redirect(
+				w,
+				r,
+				"/?status=success",
+				http.StatusSeeOther,
+			)
 			return
 		}
 
-		// --- GET: 登録済みスタンプ一覧の表示 ---
+		// =========================
+		// GET: ステータスメッセージ
+		// =========================
+
+		status := r.URL.Query().Get("status")
+
+		statusMessage := ""
+		statusClass := ""
+
+		switch status {
+		case "success":
+			statusMessage = "スタンプを登録しました。"
+			statusClass = "success"
+
+		case "not_found":
+			statusMessage = "スタンプ名が違います。正しいスタンプ名を入力してください。"
+			statusClass = "error"
+
+		case "already":
+			statusMessage = "このスタンプはすでに登録されています。"
+			statusClass = "warning"
+
+		case "error":
+			statusMessage = "登録中にエラーが発生しました。"
+			statusClass = "error"
+		}
+
+		// =========================
+		// GET: 登録済みスタンプ一覧
+		// =========================
 
 		var userStamps []UserStamp
 
 		if err := db.
 			Where("traq_id = ?", traqID).
 			Find(&userStamps).Error; err != nil {
+
 			log.Printf(
 				"Failed to fetch registered stamps for user:%s: %v",
 				traqID,
 				err,
 			)
-			http.Error(w, "Database error", http.StatusInternalServerError)
+
+			http.Error(
+				w,
+				"Database error",
+				http.StatusInternalServerError,
+			)
 			return
 		}
 
@@ -222,6 +316,7 @@ func main() {
 
 		for _, us := range userStamps {
 			stampName, ok := getStampName(us.StampID)
+
 			if !ok {
 				stampName = "(不明なスタンプ)"
 			}
@@ -232,139 +327,195 @@ func main() {
 			})
 		}
 
+		// =========================
+		// HTML
+		// =========================
+
 		tmpl := `<!DOCTYPE html>
 <html lang="ja">
 <head>
-  <meta charset="UTF-8" />
-  <title>スタンプDM通知Bot</title>
-  <link rel="icon" href="icon.png" />
+<meta charset="UTF-8">
 
-  <style>
-    body {
-      background: #f5f5f5;
-      max-width: 800px;
-      margin: 0 auto;
-      padding: 16px;
-      box-sizing: border-box;
-      font-family: sans-serif;
-      color: #333;
-    }
+<title>スタンプDM通知Bot</title>
 
-    .title {
-      display: flex;
-      align-items: center;
-      font-size: 24px;
-      font-weight: bold;
-      margin: 0 0 24px;
-    }
+<link rel="icon" href="icon.svg">
 
-    .title-icon {
-      width: 32px;
-      height: 32px;
-      margin-right: 8px;
-    }
+<style>
+  body {
+    background: #f5f5f5;
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 16px;
+    box-sizing: border-box;
+    font-family: sans-serif;
+    color: #333;
+  }
 
-    .description {
-      font-size: 14px;
-      color: #666;
-      margin-bottom: 24px;
-    }
+  .title {
+    display: flex;
+    align-items: center;
+    font-size: 24px;
+    font-weight: bold;
+    margin: 0 0 24px;
+  }
 
-    h2 {
-      font-size: 18px;
-      margin: 24px 0 12px;
-    }
+  .title-icon {
+    width: 32px;
+    height: 32px;
+    margin-right: 8px;
+  }
 
+  .description {
+    font-size: 14px;
+    color: #666;
+    margin-bottom: 24px;
+    line-height: 1.7;
+  }
+
+  h2 {
+    font-size: 18px;
+    margin: 24px 0 12px;
+  }
+
+  .status-message {
+    padding: 10px 12px;
+    margin-bottom: 16px;
+    border-radius: 6px;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  .status-success {
+    background: #e8f5e9;
+    border: 1px solid #a5d6a7;
+    color: #2e7d32;
+  }
+
+  .status-error {
+    background: #ffebee;
+    border: 1px solid #ef9a9a;
+    color: #c62828;
+  }
+
+  .status-warning {
+    background: #fff8e1;
+    border: 1px solid #ffe082;
+    color: #8d6e00;
+  }
+
+  .form-group {
+    display: flex;
+    gap: 8px;
+    width: 100%;
+  }
+
+  #stamp_name {
+    flex: 1;
+    min-width: 0;
+    font-size: 14px;
+    padding: 10px;
+    box-sizing: border-box;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    background: #fff;
+    outline: none;
+  }
+
+  #stamp_name:focus {
+    border-color: #007bff;
+  }
+
+  #add {
+    padding: 10px 18px;
+    font-size: 14px;
+    background: #007bff;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  #add:hover {
+    background: #0056b3;
+  }
+
+  ul {
+    list-style: none;
+    padding-left: 0;
+    margin: 0;
+  }
+
+  .stamp-item {
+    display: flex;
+    align-items: center;
+    padding: 10px 12px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    margin-bottom: 6px;
+    background: #f9f9f9;
+    box-sizing: border-box;
+  }
+
+  .stamp-name {
+    flex-grow: 1;
+    min-width: 0;
+    font-size: 14px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .delete-button {
+    margin-left: 12px;
+    padding: 6px 10px;
+    font-size: 12px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    background: #fff;
+    color: #555;
+    cursor: pointer;
+  }
+
+  .delete-button:hover {
+    background: #f0f0f0;
+    color: #d00;
+  }
+
+  .empty-message {
+    padding: 16px;
+    border: 1px dashed #ccc;
+    border-radius: 6px;
+    background: #fafafa;
+    color: #777;
+    text-align: center;
+    font-size: 13px;
+  }
+
+  @media (max-width: 500px) {
     .form-group {
-      display: flex;
-      gap: 8px;
-      width: 100%;
-    }
-
-    #stamp_name {
-      flex: 1;
-      min-width: 0;
-      font-size: 14px;
-      padding: 10px;
-      box-sizing: border-box;
-      border: 1px solid #ccc;
-      border-radius: 6px;
-      background: #fff;
+      flex-direction: column;
     }
 
     #add {
-      padding: 10px 18px;
-      font-size: 14px;
-      background: #007bff;
-      color: #fff;
-      border: none;
-      border-radius: 6px;
-      cursor: pointer;
-      white-space: nowrap;
+      width: 100%;
     }
 
-    #add:hover {
-      background: #0056b3;
+    .title {
+      font-size: 21px;
     }
-
-    ul {
-      list-style: none;
-      padding-left: 0;
-      margin: 0;
-    }
-
-    .stamp-item {
-      display: flex;
-      align-items: center;
-      padding: 10px 12px;
-      border: 1px solid #ddd;
-      border-radius: 6px;
-      margin-bottom: 6px;
-      background: #f9f9f9;
-      box-sizing: border-box;
-    }
-
-    .stamp-name {
-      flex-grow: 1;
-      min-width: 0;
-      font-size: 14px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .delete-button {
-      margin-left: 12px;
-      padding: 6px 10px;
-      font-size: 12px;
-      border: 1px solid #ccc;
-      border-radius: 6px;
-      background: #fff;
-      color: #555;
-      cursor: pointer;
-    }
-
-    .delete-button:hover {
-      background: #f0f0f0;
-      color: #d00;
-    }
-
-    .empty-message {
-      padding: 16px;
-      border: 1px dashed #ccc;
-      border-radius: 6px;
-      background: #fafafa;
-      color: #777;
-      text-align: center;
-      font-size: 13px;
-    }
-  </style>
+  }
+</style>
 </head>
 
 <body>
 
   <h1 class="title">
-    <img src="icon.svg" alt="icon" class="title-icon">
+    <img
+      src="icon.svg"
+      alt="icon"
+      class="title-icon"
+    >
     スタンプDM通知Bot
   </h1>
 
@@ -373,39 +524,56 @@ func main() {
     登録したスタンプがメッセージに押されたとき、DMで通知します。
   </p>
 
+  {{if .StatusMessage}}
+    <div class="status-message status-{{.StatusClass}}">
+      {{.StatusMessage}}
+    </div>
+  {{end}}
+
   <h2>スタンプを登録</h2>
 
   <form method="post" action="/">
     <div class="form-group">
+
       <input
         id="stamp_name"
         name="stamp_name"
         placeholder="スタンプ名（例: oisu-）"
         required
-      />
+      >
 
-      <button id="add" type="submit">
+      <button
+        id="add"
+        type="submit"
+      >
         追加
       </button>
+
     </div>
   </form>
 
   <h2>登録済みスタンプ</h2>
 
   {{if .Stamps}}
+
     <ul>
       {{range .Stamps}}
+
         <li class="stamp-item">
+
           <span class="stamp-name">
             :{{.Name}}:
           </span>
 
-          <form method="post" action="/delete">
+          <form
+            method="post"
+            action="/delete"
+          >
             <input
               type="hidden"
               name="id"
               value="{{.ID}}"
-            />
+            >
 
             <button
               type="submit"
@@ -414,13 +582,18 @@ func main() {
               削除
             </button>
           </form>
+
         </li>
+
       {{end}}
     </ul>
+
   {{else}}
+
     <div class="empty-message">
       登録されているスタンプはありません。
     </div>
+
   {{end}}
 
 </body>
@@ -428,20 +601,38 @@ func main() {
 
 		t, err := template.New("web").Parse(tmpl)
 		if err != nil {
-			log.Printf("Failed to parse template: %v", err)
-			http.Error(w, "Template error", http.StatusInternalServerError)
+			log.Printf(
+				"Failed to parse template: %v",
+				err,
+			)
+
+			http.Error(
+				w,
+				"Template error",
+				http.StatusInternalServerError,
+			)
 			return
 		}
 
-		if err := t.Execute(w, map[string]interface{}{
-			"TraqID": traqID,
-			"Stamps": stamps,
-		}); err != nil {
-			log.Printf("Failed to execute template: %v", err)
+		if err := t.Execute(
+			w,
+			map[string]interface{}{
+				"TraqID":        traqID,
+				"Stamps":        stamps,
+				"StatusMessage": statusMessage,
+				"StatusClass":   statusClass,
+			},
+		); err != nil {
+			log.Printf(
+				"Failed to execute template: %v",
+				err,
+			)
 		}
 	})
 
-	// --- スタンプの登録削除 ---
+	// =========================
+	// スタンプの登録削除
+	// =========================
 
 	http.HandleFunc("/delete", func(w http.ResponseWriter, r *http.Request) {
 		traqID := r.Header.Get("X-Showcase-User")
@@ -456,8 +647,13 @@ func main() {
 			)
 
 			if err := db.
-				Where("id = ? AND traq_id = ?", id, traqID).
+				Where(
+					"id = ? AND traq_id = ?",
+					id,
+					traqID,
+				).
 				Delete(&UserStamp{}).Error; err != nil {
+
 				log.Printf(
 					"Failed to delete stamp registration: %v",
 					err,
@@ -465,20 +661,40 @@ func main() {
 			}
 		}
 
-		http.Redirect(w, r, "/", http.StatusSeeOther)
+		http.Redirect(
+			w,
+			r,
+			"/",
+			http.StatusSeeOther,
+		)
 	})
 
+	// =========================
+	// HTTPサーバー起動
+	// =========================
+
 	port := os.Getenv("PORT")
+
 	if port == "" {
 		port = "8080"
 	}
 
-	log.Printf("Server started on :%s", port)
+	log.Printf(
+		"Server started on :%s",
+		port,
+	)
 
-	log.Fatal(http.ListenAndServe(":"+port, nil))
+	log.Fatal(
+		http.ListenAndServe(
+			":"+port,
+			nil,
+		),
+	)
 }
 
-// --- キャッシュ操作 ---
+// ============================================================
+// キャッシュ操作
+// ============================================================
 
 func getStampID(stampName string) (string, bool) {
 	cacheMu.RLock()
@@ -504,7 +720,9 @@ func getUserUUID(traqID string) (string, bool) {
 	return uuid, ok
 }
 
-// --- API操作 ---
+// ============================================================
+// キャッシュ更新
+// ============================================================
 
 func updateCache() {
 	log.Println("Updating user and stamp caches...")
@@ -520,8 +738,12 @@ func updateCache() {
 		baseURL+"/users",
 		nil,
 	)
+
 	if err != nil {
-		log.Printf("Failed to create users request: %v", err)
+		log.Printf(
+			"Failed to create users request: %v",
+			err,
+		)
 	} else {
 		reqU.Header.Set(
 			"Authorization",
@@ -529,19 +751,29 @@ func updateCache() {
 		)
 
 		resp, err := httpClient.Do(reqU)
+
 		if err != nil {
-			log.Printf("Failed to fetch users: %v", err)
+			log.Printf(
+				"Failed to fetch users: %v",
+				err,
+			)
 		} else {
-			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			if resp.StatusCode < 200 ||
+				resp.StatusCode >= 300 {
+
 				log.Printf(
 					"Failed to fetch users: HTTP %d",
 					resp.StatusCode,
 				)
+
 				resp.Body.Close()
 			} else {
 				var users []User
 
-				err := json.NewDecoder(resp.Body).Decode(&users)
+				err := json.NewDecoder(
+					resp.Body,
+				).Decode(&users)
+
 				resp.Body.Close()
 
 				if err != nil {
@@ -579,8 +811,12 @@ func updateCache() {
 		baseURL+"/stamps",
 		nil,
 	)
+
 	if err != nil {
-		log.Printf("Failed to create stamps request: %v", err)
+		log.Printf(
+			"Failed to create stamps request: %v",
+			err,
+		)
 	} else {
 		reqS.Header.Set(
 			"Authorization",
@@ -588,19 +824,29 @@ func updateCache() {
 		)
 
 		resp, err := httpClient.Do(reqS)
+
 		if err != nil {
-			log.Printf("Failed to fetch stamps: %v", err)
+			log.Printf(
+				"Failed to fetch stamps: %v",
+				err,
+			)
 		} else {
-			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			if resp.StatusCode < 200 ||
+				resp.StatusCode >= 300 {
+
 				log.Printf(
 					"Failed to fetch stamps: HTTP %d",
 					resp.StatusCode,
 				)
+
 				resp.Body.Close()
 			} else {
 				var stamps []Stamp
 
-				err := json.NewDecoder(resp.Body).Decode(&stamps)
+				err := json.NewDecoder(
+					resp.Body,
+				).Decode(&stamps)
+
 				resp.Body.Close()
 
 				if err != nil {
@@ -629,19 +875,32 @@ func updateCache() {
 	}
 }
 
-// --- メッセージ検索・DM送信 ---
+// ============================================================
+// メッセージ検索・通知
+// ============================================================
 
 func checkMessagesAndSendDM(db *gorm.DB) {
-	// 3分ごとに実行するが、4分前まで検索する。
-	// 1分ぶん重複することで、実行タイミングのズレによる取りこぼしを防ぐ。
+	// 3分ごとに実行するが、
+	// 直近4分まで検索する。
+	//
+	// 1分ぶん検索範囲を重複させることで、
+	// 実行タイミングのズレによる取りこぼしを防ぐ。
 	since := time.Now().
 		Add(-4 * time.Minute).
 		UTC().
 		Format(time.RFC3339)
 
 	v := url.Values{}
-	v.Add("limit", "100")
-	v.Add("after", since)
+
+	v.Add(
+		"limit",
+		"100",
+	)
+
+	v.Add(
+		"after",
+		since,
+	)
 
 	searchURL := fmt.Sprintf(
 		"%s/messages?%s",
@@ -659,6 +918,7 @@ func checkMessagesAndSendDM(db *gorm.DB) {
 		searchURL,
 		nil,
 	)
+
 	if err != nil {
 		log.Printf(
 			"Failed to create messages request: %v",
@@ -673,6 +933,7 @@ func checkMessagesAndSendDM(db *gorm.DB) {
 	)
 
 	resp, err := httpClient.Do(req)
+
 	if err != nil {
 		log.Printf(
 			"Search API error: %v",
@@ -680,10 +941,13 @@ func checkMessagesAndSendDM(db *gorm.DB) {
 		)
 		return
 	}
+
 	defer resp.Body.Close()
 
-	// HTTPステータスを確認
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+	// HTTPステータスチェック
+	if resp.StatusCode < 200 ||
+		resp.StatusCode >= 300 {
+
 		log.Printf(
 			"Search API returned status: %d",
 			resp.StatusCode,
@@ -691,15 +955,18 @@ func checkMessagesAndSendDM(db *gorm.DB) {
 		return
 	}
 
-	// APIレスポンスは
+	// APIレスポンス:
+	//
 	// {
 	//   "totalHits": 10000,
 	//   "hits": [...]
 	// }
-	// という形なので、MessageSearchResponseにDecodeする。
 	var result MessageSearchResponse
 
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.NewDecoder(
+		resp.Body,
+	).Decode(&result); err != nil {
+
 		log.Printf(
 			"Failed to decode messages response: %v",
 			err,
@@ -716,12 +983,23 @@ func checkMessagesAndSendDM(db *gorm.DB) {
 	)
 
 	for _, msg := range messages {
-		processMessage(db, msg)
+		processMessage(
+			db,
+			msg,
+		)
 	}
 }
 
-func processMessage(db *gorm.DB, msg Message) {
-	// 1メッセージ内で同じスタンプが複数回登場しても1回だけ扱う
+// ============================================================
+// 1メッセージの処理
+// ============================================================
+
+func processMessage(
+	db *gorm.DB,
+	msg Message,
+) {
+	// 1メッセージ内で同じスタンプが
+	// 複数回登場しても1回だけ扱う
 	seenStampsInMsg := map[string]bool{}
 
 	// ユーザーごとに一致したスタンプ名をまとめる
@@ -738,8 +1016,12 @@ func processMessage(db *gorm.DB, msg Message) {
 		var targets []UserStamp
 
 		if err := db.
-			Where("stamp_id = ?", s.StampID).
+			Where(
+				"stamp_id = ?",
+				s.StampID,
+			).
 			Find(&targets).Error; err != nil {
+
 			log.Printf(
 				"Failed to find users for stamp:%s on message:%s: %v",
 				s.StampID,
@@ -749,7 +1031,10 @@ func processMessage(db *gorm.DB, msg Message) {
 			continue
 		}
 
-		name, ok := getStampName(s.StampID)
+		name, ok := getStampName(
+			s.StampID,
+		)
+
 		if !ok {
 			log.Printf(
 				"Stamp name not found for stamp ID:%s",
@@ -778,13 +1063,18 @@ func processMessage(db *gorm.DB, msg Message) {
 	}
 }
 
+// ============================================================
+// ユーザーへの通知
+// ============================================================
+
 func sendNotificationToUser(
 	db *gorm.DB,
 	msg Message,
 	traqID string,
 	stampNames []string,
 ) {
-	// すでにこのユーザーへこのメッセージを通知済みか確認
+	// すでにこのユーザーへこのメッセージを
+	// 通知済みか確認
 	var count int64
 
 	if err := db.
@@ -795,6 +1085,7 @@ func sendNotificationToUser(
 			traqID,
 		).
 		Count(&count).Error; err != nil {
+
 		log.Printf(
 			"Failed to check notification log for user:%s message:%s: %v",
 			traqID,
@@ -815,6 +1106,7 @@ func sendNotificationToUser(
 
 	// traQ ID -> UUID
 	userUUID, ok := getUserUUID(traqID)
+
 	if !ok {
 		log.Printf(
 			"User UUID not found for traq_id:%s",
@@ -843,7 +1135,10 @@ func sendNotificationToUser(
 	)
 
 	// DM送信に成功した場合だけ通知済みとして記録
-	if !sendDM(userUUID, dmContent) {
+	if !sendDM(
+		userUUID,
+		dmContent,
+	) {
 		return
 	}
 
@@ -852,7 +1147,10 @@ func sendNotificationToUser(
 		TraqID:    traqID,
 	}
 
-	if err := db.Create(notificationLog).Error; err != nil {
+	if err := db.Create(
+		notificationLog,
+	).Error; err != nil {
+
 		log.Printf(
 			"Failed to save notification log for user:%s message:%s: %v",
 			traqID,
@@ -869,17 +1167,27 @@ func sendNotificationToUser(
 	)
 }
 
-func sendDM(userUUID, content string) bool {
+// ============================================================
+// DM送信
+// ============================================================
+
+func sendDM(
+	userUUID string,
+	content string,
+) bool {
 	apiURL := fmt.Sprintf(
 		"%s/users/%s/messages",
 		baseURL,
 		userUUID,
 	)
 
-	body, err := json.Marshal(map[string]interface{}{
-		"content": content,
-		"embed":   true,
-	})
+	body, err := json.Marshal(
+		map[string]interface{}{
+			"content": content,
+			"embed":   true,
+		},
+	)
+
 	if err != nil {
 		log.Printf(
 			"Failed to encode DM body for %s: %v",
@@ -894,6 +1202,7 @@ func sendDM(userUUID, content string) bool {
 		apiURL,
 		bytes.NewBuffer(body),
 	)
+
 	if err != nil {
 		log.Printf(
 			"Failed to create DM request for %s: %v",
@@ -907,23 +1216,29 @@ func sendDM(userUUID, content string) bool {
 		"Authorization",
 		"Bearer "+botToken,
 	)
+
 	req.Header.Set(
 		"Content-Type",
 		"application/json",
 	)
 
 	resp, err := httpClient.Do(req)
+
 	if err != nil {
 		log.Printf(
 			"Error sending DM to %s: %v",
 			userUUID,
 			err,
 		)
+
 		return false
 	}
+
 	defer resp.Body.Close()
 
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+	if resp.StatusCode >= 200 &&
+		resp.StatusCode < 300 {
+
 		log.Printf(
 			"Successfully sent DM to %s",
 			userUUID,
