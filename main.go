@@ -142,7 +142,7 @@ func main() {
 	}()
 
 	// --- Webページ & API ---
-	http.HandleFunc("/favicon.svg", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/assets/favicon.svg", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/svg+xml")
 		w.Write(faviconSVG)
 	})
@@ -365,7 +365,7 @@ func main() {
 
 <title>ReaQtion</title>
 
-<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="icon" type="image/svg+xml" sizes="any" href="/assets/favicon.svg?v=2">
 
 <style>
   body {
@@ -545,7 +545,6 @@ func main() {
   </h1>
 
   <p class="description">
-    ようこそ、{{.TraqID}}さん。<br>
     登録したスタンプがメッセージに押されたとき、DMで通知します。
   </p>
 
