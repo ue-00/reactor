@@ -1,6 +1,6 @@
 module traq-stamp-bot
 
-go 1.27.0
+go 1.26.7
 
 require (
 	filippo.io/edwards25519 v1.1.0 // indirect
