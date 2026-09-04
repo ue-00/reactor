@@ -45,13 +45,11 @@ type Stamp struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 }
-type SearchResponse struct {
-	Hits []struct {
-		ID     string `json:"id"`
-		Stamps []struct {
-			StampID string `json:"stampId"`
-		} `json:"stamps"`
-	} `json:"hits"`
+type Message struct {
+	ID     string `json:"id"`
+	Stamps []struct {
+		StampID string `json:"stampId"`
+	} `json:"stamps"`
 }
 
 func main() {
@@ -96,7 +94,6 @@ func main() {
 				stampName := strings.Trim(r.FormValue("stamp_name"), ":")
 				log.Printf("Received registration request from user:%s for stamp:%s", traqID, stampName)
 				if stampID, ok := stampCache[stampName]; ok {
-					// 既に登録されていないか確認
 					var count int64
 					db.Model(&UserStamp{}).Where("traq_id = ? AND stamp_id = ?", traqID, stampID).Count(&count)
 					if count == 0 {
@@ -235,10 +232,9 @@ func checkMessagesAndSendDM(db *gorm.DB) {
 	// 15分前の時刻をRFC3339（UTC）で指定
 	since := time.Now().Add(-15 * time.Minute).UTC().Format(time.RFC3339)
 
-	// 正しいエンドポイントは /api/v3/messages
 	v := url.Values{}
 	v.Add("limit", "100")
-	v.Add("after", since) // 指定時刻以降のメッセージを抽出
+	v.Add("after", since)
 
 	searchURL := fmt.Sprintf("%s/messages?%s", baseURL, v.Encode())
 	log.Printf("Fetching messages URL: %s", searchURL)
@@ -252,40 +248,48 @@ func checkMessagesAndSendDM(db *gorm.DB) {
 	}
 	defer resp.Body.Close()
 
-	var searchRes SearchResponse
-	if err := json.NewDecoder(resp.Body).Decode(&searchRes); err != nil {
-		log.Println("Failed to decode search response:", err)
+	var messages []Message
+	if err := json.NewDecoder(resp.Body).Decode(&messages); err != nil {
+		log.Println("Failed to decode messages response:", err)
 		return
 	}
 
-	log.Printf("Found %d messages in the last 15 minutes", len(searchRes.Hits))
+	log.Printf("Found %d messages in the last 15 minutes", len(messages))
 
-	// 取得したメッセージ群からスタンプを検証
-	for _, hit := range searchRes.Hits {
-		// 同じメッセージ内で同一スタンプが複数回押された場合の重複通知を防ぐマップ
-		seenStamps := map[string]bool{}
+	for _, msg := range messages {
+		// 1メッセージ内で重複するスタンプ判定を避けるセット
+		seenStampsInMsg := map[string]bool{}
 
-		for _, s := range hit.Stamps {
-			// すでに処理したスタンプIDならスキップ
-			if seenStamps[s.StampID] {
+		// ユーザーごとに一致したスタンプ名をまとめるマップ: traqID -> []stampName
+		userMatchedStamps := map[string][]string{}
+
+		for _, s := range msg.Stamps {
+			if seenStampsInMsg[s.StampID] {
 				continue
 			}
-			seenStamps[s.StampID] = true
+			seenStampsInMsg[s.StampID] = true
 
 			var targets []UserStamp
 			db.Where("stamp_id = ?", s.StampID).Find(&targets)
-			if len(targets) > 0 {
-				log.Printf("Message %s has stamp :%s: (ID:%s). Found %d targets.", hit.ID, stampIdToName[s.StampID], s.StampID, len(targets))
-			}
 			for _, target := range targets {
-				if userUUID, ok := userCache[target.TraqID]; ok {
-					msg := fmt.Sprintf("あなたが登録したスタンプ ( :%s: ) が付いたメッセージがあります！\nhttps://q.trap.jp/messages/%s", stampIdToName[s.StampID], hit.ID)
-					log.Printf("Sending DM to user:%s (UUID:%s) for message:%s", target.TraqID, userUUID, hit.ID)
-					sendDM(userUUID, msg)
-				} else {
-					log.Printf("User UUID not found for traq_id:%s", target.TraqID)
-				}
+				name := stampIdToName[s.StampID]
+				userMatchedStamps[target.TraqID] = append(userMatchedStamps[target.TraqID], ":"+name+":")
 			}
+		}
+
+		// ユーザーごとに1通にまとめてDM送信
+		for traqID, stampNames := range userMatchedStamps {
+			userUUID, ok := userCache[traqID]
+			if !ok {
+				log.Printf("User UUID not found for traq_id:%s", traqID)
+				continue
+			}
+
+			stampsText := strings.Join(stampNames, " ")
+			dmContent := fmt.Sprintf("登録したスタンプ ( %s ) が付いたメッセージがあります！\nhttps://q.trap.jp/messages/%s", stampsText, msg.ID)
+
+			log.Printf("Sending DM to user:%s (UUID:%s) with stamps [%s] for message:%s", traqID, userUUID, stampsText, msg.ID)
+			sendDM(userUUID, dmContent)
 		}
 	}
 }
@@ -311,6 +315,5 @@ func sendDM(userUUID, content string) {
 	} else {
 		log.Printf("Error sending DM to %s: %v", userUUID, err)
 	}
-	// traQサーバーへの負荷対策として少し待つ
 	time.Sleep(100 * time.Millisecond)
 }
