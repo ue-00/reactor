@@ -26,8 +26,8 @@ var (
 // --- DBモデル ---
 type UserStamp struct {
 	ID      uint   `gorm:"primaryKey"`
-	TraqID  string `gorm:"index"`
-	StampID string
+	TraqID  string `gorm:"uniqueIndex:idx_user_stamp;size:36"`
+	StampID string `gorm:"uniqueIndex:idx_user_stamp;size:36"`
 }
 
 // --- APIレスポンス用構造体 ---
@@ -62,16 +62,20 @@ func main() {
 		log.Fatalf("failed to connect database: %v", err)
 	}
 	db.AutoMigrate(&UserStamp{})
+	log.Println("Database connection and migration successful.")
 
 	// 初回キャッシュ取得
 	updateCache()
 
-	// 定期実行バッチ (1時間ごと)
+	// 定期実行バッチ (15分ごと)
 	go func() {
-		ticker := time.NewTicker(1 * time.Hour)
+		log.Println("Starting 15-minute polling batch...")
+		ticker := time.NewTicker(15 * time.Minute)
 		for range ticker.C {
+			log.Println("--- Triggered polling batch ---")
 			updateCache()
 			checkMessagesAndSendDM(db)
+			log.Println("--- Finished polling batch ---")
 		}
 	}()
 
@@ -84,13 +88,19 @@ func main() {
 		if r.Method == http.MethodPost {
 			if err := r.ParseForm(); err == nil {
 				stampName := strings.Trim(r.FormValue("stamp_name"), ":")
+				log.Printf("Received registration request from user:%s for stamp:%s", traqID, stampName)
 				if stampID, ok := stampCache[stampName]; ok {
 					// 既に登録されていないか確認
 					var count int64
 					db.Model(&UserStamp{}).Where("traq_id = ? AND stamp_id = ?", traqID, stampID).Count(&count)
 					if count == 0 {
 						db.Create(&UserStamp{TraqID: traqID, StampID: stampID})
+						log.Printf("Successfully registered stamp:%s (ID:%s) for user:%s", stampName, stampID, traqID)
+					} else {
+						log.Printf("Stamp:%s is already registered for user:%s", stampName, traqID)
 					}
+				} else {
+					log.Printf("Stamp:%s not found in cache", stampName)
 				}
 			}
 			http.Redirect(w, r, "/", http.StatusSeeOther)
@@ -159,6 +169,7 @@ func main() {
 		traqID := r.Header.Get("X-Showcase-User")
 		if r.Method == http.MethodPost {
 			id := r.FormValue("id")
+			log.Printf("Received delete request from user:%s for record ID:%s", traqID, id)
 			db.Where("id = ? AND traq_id = ?", id, traqID).Delete(&UserStamp{})
 		}
 		http.Redirect(w, r, "/", http.StatusSeeOther)
@@ -175,6 +186,7 @@ func main() {
 // --- API操作・バッチロジック ---
 
 func updateCache() {
+	log.Println("Updating user and stamp caches...")
 	// ユーザー一覧の取得
 	reqU, _ := http.NewRequest("GET", baseURL+"/users", nil)
 	reqU.Header.Set("Authorization", "Bearer "+botToken)
@@ -185,7 +197,12 @@ func updateCache() {
 			for _, u := range users {
 				userCache[u.Name] = u.ID
 			}
+			log.Printf("User cache updated: %d users", len(userCache))
+		} else {
+			log.Println("Failed to decode users response")
 		}
+	} else {
+		log.Printf("Failed to fetch users: %v", err)
 	}
 
 	// スタンプ一覧の取得
@@ -199,14 +216,20 @@ func updateCache() {
 				stampCache[s.Name] = s.ID
 				stampIdToName[s.ID] = s.Name
 			}
+			log.Printf("Stamp cache updated: %d stamps", len(stampCache))
+		} else {
+			log.Println("Failed to decode stamps response")
 		}
+	} else {
+		log.Printf("Failed to fetch stamps: %v", err)
 	}
 }
 
 func checkMessagesAndSendDM(db *gorm.DB) {
-	// 1時間前の時刻をRFC3339で指定
-	since := time.Now().Add(-1 * time.Hour).UTC().Format(time.RFC3339)
+	// 15分前の時刻をRFC3339で指定
+	since := time.Now().Add(-15 * time.Minute).UTC().Format(time.RFC3339)
 	url := fmt.Sprintf("%s/search/messages?limit=100&q=created:>=%s", baseURL, since)
+	log.Printf("Fetching messages since: %s", since)
 
 	req, _ := http.NewRequest("GET", url, nil)
 	req.Header.Set("Authorization", "Bearer "+botToken)
@@ -219,18 +242,27 @@ func checkMessagesAndSendDM(db *gorm.DB) {
 
 	var searchRes SearchResponse
 	if err := json.NewDecoder(resp.Body).Decode(&searchRes); err != nil {
+		log.Println("Failed to decode search response:", err)
 		return
 	}
+
+	log.Printf("Found %d messages in the last 15 minutes", len(searchRes.Hits))
 
 	// 取得したメッセージ群からスタンプを検証
 	for _, hit := range searchRes.Hits {
 		for _, s := range hit.Stamps {
 			var targets []UserStamp
 			db.Where("stamp_id = ?", s.StampID).Find(&targets)
+			if len(targets) > 0 {
+				log.Printf("Message %s has stamp :%s: (ID:%s). Found %d targets.", hit.ID, stampIdToName[s.StampID], s.StampID, len(targets))
+			}
 			for _, target := range targets {
 				if userUUID, ok := userCache[target.TraqID]; ok {
-					msg := fmt.Sprintf("あなたが登録したスタンプ (:%s:) が付いたメッセージがあります！\nhttps://q.trap.jp/messages/%s", stampIdToName[s.StampID], hit.ID)
+					msg := fmt.Sprintf("あなたが登録したスタンプ ( :%s: ) が付いたメッセージがあります！\nhttps://q.trap.jp/messages/%s", stampIdToName[s.StampID], hit.ID)
+					log.Printf("Sending DM to user:%s (UUID:%s) for message:%s", target.TraqID, userUUID, hit.ID)
 					sendDM(userUUID, msg)
+				} else {
+					log.Printf("User UUID not found for traq_id:%s", target.TraqID)
 				}
 			}
 		}
@@ -249,7 +281,14 @@ func sendDM(userUUID, content string) {
 
 	resp, err := http.DefaultClient.Do(req)
 	if err == nil {
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			log.Printf("Successfully sent DM to %s", userUUID)
+		} else {
+			log.Printf("Failed to send DM to %s, Status Code: %d", userUUID, resp.StatusCode)
+		}
 		resp.Body.Close()
+	} else {
+		log.Printf("Error sending DM to %s: %v", userUUID, err)
 	}
 	// traQサーバーへの負荷対策として少し待つ
 	time.Sleep(100 * time.Millisecond)
