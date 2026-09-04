@@ -552,7 +552,8 @@ func main() {
     }
   }
   #stamp-suggestions { max-height: 320px; overflow-y: auto; border: 1px solid #ddd; border-radius: 6px; margin-bottom: 16px; }
-  .stamp-option { display: flex; align-items: center; padding: 8px 12px; cursor: pointer; overflow-wrap: anywhere; }
+  .stamp-option { display: flex; align-items: center; padding: 8px 12px; cursor: pointer; height: 56px; box-sizing: border-box; }
+  .stamp-option span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .stamp-option[aria-selected="true"], .stamp-option:hover { background: #e8f1ff; }
 </style>
 </head>
@@ -676,41 +677,77 @@ func main() {
     close();
     input.focus();
   }
+  const rowHeight = 56;
+  const visibleRows = new Map();
+  const space = document.createElement('div');
+  space.style.position = 'relative';
+  space.setAttribute('role', 'presentation');
+  list.append(space);
+  function renderWindow() {
+    if (list.hidden) return;
+    const start = Math.max(0, Math.floor(list.scrollTop / rowHeight) - 2);
+    const end = Math.min(matches.length, Math.ceil((list.scrollTop + list.clientHeight) / rowHeight) + 2);
+    for (const [index, row] of visibleRows) {
+      if (index < start || index >= end) { row.remove(); visibleRows.delete(index); }
+    }
+    for (let index = start; index < end; index++) {
+      let row = visibleRows.get(index);
+      if (!row) {
+        const stamp = matches[index];
+        row = document.createElement('div');
+        row.className = 'stamp-option';
+        row.id = 'stamp-option-' + index;
+        row.style.position = 'absolute';
+        row.style.top = (index * rowHeight) + 'px';
+        row.style.width = '100%';
+        row.setAttribute('role', 'option');
+        row.setAttribute('aria-posinset', String(index + 1));
+        row.setAttribute('aria-setsize', String(matches.length));
+        const image = document.createElement('img');
+        image.className = 'stamp-image';
+        image.width = image.height = 40;
+        image.alt = '';
+        image.loading = 'lazy';
+        image.src = '/stamp-images/' + encodeURIComponent(stamp.id);
+        image.onerror = () => { image.hidden = true; };
+        const label = document.createElement('span');
+        label.textContent = ':' + stamp.name + ':';
+        row.title = label.textContent;
+        row.append(image, label);
+        row.addEventListener('pointerdown', e => { if (e.pointerType === 'mouse') e.preventDefault(); });
+        row.addEventListener('click', () => select(index));
+        visibleRows.set(index, row);
+        space.append(row);
+      }
+      row.setAttribute('aria-selected', String(index === active));
+    }
+    if (visibleRows.has(active)) input.setAttribute('aria-activedescendant', 'stamp-option-' + active);
+    else input.removeAttribute('aria-activedescendant');
+  }
   function render() {
     const query = input.value.trim().replace(/^:+|:+$/g, '').toLowerCase();
     close();
-    list.replaceChildren();
+    space.replaceChildren();
+    visibleRows.clear();
+    matches = [];
     if (!query) return;
     const prefix = [], partial = [];
+    const singleCharacter = Array.from(query).length === 1;
     for (const stamp of stamps) {
       const name = stamp.name.toLowerCase();
+      if (singleCharacter && Array.from(name).length !== 1) continue;
       if (name.startsWith(query)) prefix.push(stamp);
       else if (name.includes(query)) partial.push(stamp);
     }
-    matches = prefix.concat(partial).slice(0, 8);
-    matches.forEach((stamp, index) => {
-      const row = document.createElement('div');
-      row.className = 'stamp-option';
-      row.id = 'stamp-option-' + index;
-      row.setAttribute('role', 'option');
-      row.setAttribute('aria-selected', 'false');
-      const image = document.createElement('img');
-      image.className = 'stamp-image';
-      image.width = image.height = 40;
-      image.alt = '';
-      image.loading = 'lazy';
-      image.src = '/stamp-images/' + encodeURIComponent(stamp.id);
-      image.onerror = () => { image.hidden = true; };
-      const label = document.createElement('span');
-      label.textContent = ':' + stamp.name + ':';
-      row.append(image, label);
-      row.addEventListener('pointerdown', e => e.preventDefault());
-      row.addEventListener('click', () => select(index));
-      list.append(row);
-    });
+    matches = prefix.concat(partial);
+    space.style.height = (matches.length * rowHeight) + 'px';
     list.hidden = matches.length === 0;
+    list.scrollTop = 0;
     input.setAttribute('aria-expanded', String(!list.hidden));
+    renderWindow();
   }
+  list.addEventListener('scroll', renderWindow);
+  window.addEventListener('resize', renderWindow);
   input.addEventListener('input', () => {
     close();
     timer = setTimeout(render, 200);
@@ -723,12 +760,16 @@ func main() {
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault();
       active = active < 0 ? (e.key === 'ArrowDown' ? 0 : matches.length - 1) : (active + (e.key === 'ArrowDown' ? 1 : -1) + matches.length) % matches.length;
-      Array.from(list.children).forEach((row, i) => row.setAttribute('aria-selected', String(i === active)));
-      input.setAttribute('aria-activedescendant', list.children[active].id);
-      list.children[active].scrollIntoView({block: 'nearest'});
+      const top = active * rowHeight;
+      if (top < list.scrollTop) list.scrollTop = top;
+      else if (top + rowHeight > list.scrollTop + list.clientHeight) list.scrollTop = top + rowHeight - list.clientHeight;
+      renderWindow();
     }
   });
-  input.addEventListener('blur', close);
+  document.addEventListener('pointerdown', e => {
+    if (e.target !== input && !list.contains(e.target)) close();
+  });
+  input.addEventListener('keydown', e => { if (e.key === 'Tab') close(); });
 })();
 </script>
 </body>
