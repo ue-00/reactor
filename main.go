@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -142,6 +143,7 @@ func main() {
 	}()
 
 	// --- Webページ & API ---
+	http.HandleFunc("GET /stamp-images/{stampID}", serveStampImage)
 	http.HandleFunc("/assets/favicon.svg", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/svg+xml")
 		w.Write(faviconSVG)
@@ -352,7 +354,7 @@ func main() {
 			stamps = append(stamps, StampInfo{
 				ID:       us.ID,
 				Name:     stampName,
-				ImageURL: baseURL + "/stamps/" + url.PathEscape(us.StampID) + "/image",
+				ImageURL: "/stamp-images/" + url.PathEscape(us.StampID),
 			})
 		}
 
@@ -1266,4 +1268,51 @@ func sendDM(
 	time.Sleep(100 * time.Millisecond)
 
 	return false
+}
+
+// スタンプ画像はBot認証で取得し、トークンをブラウザへ渡さない。
+func serveStampImage(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("X-Showcase-User") == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	stampID := r.PathValue("stampID")
+	if _, ok := getStampName(stampID); !ok {
+		http.NotFound(w, r)
+		return
+	}
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet,
+		baseURL+"/stamps/"+url.PathEscape(stampID)+"/image", nil)
+	if err != nil {
+		http.Error(w, "Image request failed", http.StatusInternalServerError)
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+botToken)
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		log.Printf("Failed to fetch stamp image %s: %v", stampID, err)
+		http.Error(w, "Image fetch failed", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("Stamp image %s returned status %d", stampID, resp.StatusCode)
+		if resp.StatusCode == http.StatusNotFound {
+			http.NotFound(w, r)
+		} else {
+			http.Error(w, "Image fetch failed", http.StatusBadGateway)
+		}
+		return
+	}
+	contentType := resp.Header.Get("Content-Type")
+	if !strings.HasPrefix(contentType, "image/") {
+		http.Error(w, "Invalid image response", http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "private, max-age=3600")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if _, err := io.Copy(w, resp.Body); err != nil {
+		log.Printf("Failed to write stamp image %s: %v", stampID, err)
+	}
 }
