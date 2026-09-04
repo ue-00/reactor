@@ -233,77 +233,196 @@ func main() {
 		}
 
 		tmpl := `<!DOCTYPE html>
-<html>
+<html lang="ja">
 <head>
-<meta charset="UTF-8">
-<title>スタンプDM通知Bot</title>
-<style>
-  body {
-    font-family: sans-serif;
-    max-width: 600px;
-    margin: 2rem auto;
-    padding: 0 1rem;
-  }
+  <meta charset="UTF-8" />
+  <title>スタンプDM通知Bot</title>
+  <link rel="icon" href="icon.png" />
 
-  ul {
-    padding-left: 0;
-    list-style: none;
-  }
+  <style>
+    body {
+      background: #f5f5f5;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 16px;
+      box-sizing: border-box;
+      font-family: sans-serif;
+      color: #333;
+    }
 
-  li {
-    padding: 0.5rem;
-    border-bottom: 1px solid #ccc;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
+    .title {
+      display: flex;
+      align-items: center;
+      font-size: 24px;
+      font-weight: bold;
+      margin: 0 0 24px;
+    }
 
-  form {
-    margin: 0;
-  }
-</style>
+    .title-icon {
+      width: 32px;
+      height: 32px;
+      margin-right: 8px;
+    }
+
+    .description {
+      font-size: 14px;
+      color: #666;
+      margin-bottom: 24px;
+    }
+
+    h2 {
+      font-size: 18px;
+      margin: 24px 0 12px;
+    }
+
+    .form-group {
+      display: flex;
+      gap: 8px;
+      width: 100%;
+    }
+
+    #stamp_name {
+      flex: 1;
+      min-width: 0;
+      font-size: 14px;
+      padding: 10px;
+      box-sizing: border-box;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      background: #fff;
+    }
+
+    #add {
+      padding: 10px 18px;
+      font-size: 14px;
+      background: #007bff;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    #add:hover {
+      background: #0056b3;
+    }
+
+    ul {
+      list-style: none;
+      padding-left: 0;
+      margin: 0;
+    }
+
+    .stamp-item {
+      display: flex;
+      align-items: center;
+      padding: 10px 12px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      margin-bottom: 6px;
+      background: #f9f9f9;
+      box-sizing: border-box;
+    }
+
+    .stamp-name {
+      flex-grow: 1;
+      min-width: 0;
+      font-size: 14px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .delete-button {
+      margin-left: 12px;
+      padding: 6px 10px;
+      font-size: 12px;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      background: #fff;
+      color: #555;
+      cursor: pointer;
+    }
+
+    .delete-button:hover {
+      background: #f0f0f0;
+      color: #d00;
+    }
+
+    .empty-message {
+      padding: 16px;
+      border: 1px dashed #ccc;
+      border-radius: 6px;
+      background: #fafafa;
+      color: #777;
+      text-align: center;
+      font-size: 13px;
+    }
+  </style>
 </head>
-<body>
-  <h1>ようこそ、{{.TraqID}}さん</h1>
 
-  <p>
-    ここでは、あなたが登録したスタンプを管理できます。
+<body>
+
+  <h1 class="title">
+    <img src="icon.svg" alt="icon" class="title-icon">
+    スタンプDM通知Bot
+  </h1>
+
+  <p class="description">
+    ようこそ、{{.TraqID}}さん。<br>
+    登録したスタンプがメッセージに押されたとき、DMで通知します。
   </p>
 
-  <h2>新しく登録</h2>
+  <h2>スタンプを登録</h2>
 
   <form method="post" action="/">
-    <input
-      type="text"
-      name="stamp_name"
-      placeholder="スタンプ名 (例: oisu-)"
-      required
-    >
-    <button type="submit">登録</button>
+    <div class="form-group">
+      <input
+        id="stamp_name"
+        name="stamp_name"
+        placeholder="スタンプ名（例: oisu-）"
+        required
+      />
+
+      <button id="add" type="submit">
+        追加
+      </button>
+    </div>
   </form>
 
   <h2>登録済みスタンプ</h2>
 
-  <ul>
-  {{range .Stamps}}
-    <li>
-      <span>:{{.Name}}:</span>
+  {{if .Stamps}}
+    <ul>
+      {{range .Stamps}}
+        <li class="stamp-item">
+          <span class="stamp-name">
+            :{{.Name}}:
+          </span>
 
-      <form method="post" action="/delete">
-        <input
-          type="hidden"
-          name="id"
-          value="{{.ID}}"
-        >
-        <button type="submit">削除</button>
-      </form>
-    </li>
+          <form method="post" action="/delete">
+            <input
+              type="hidden"
+              name="id"
+              value="{{.ID}}"
+            />
+
+            <button
+              type="submit"
+              class="delete-button"
+            >
+              削除
+            </button>
+          </form>
+        </li>
+      {{end}}
+    </ul>
   {{else}}
-    <li>
-      <span>登録されているスタンプはありません。</span>
-    </li>
+    <div class="empty-message">
+      登録されているスタンプはありません。
+    </div>
   {{end}}
-  </ul>
+
 </body>
 </html>`
 
