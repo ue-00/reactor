@@ -38,6 +38,9 @@ var (
 //go:embed icon.svg
 var iconSVG []byte
 
+//go:embed favicon.svg
+var faviconSVG []byte
+
 // --- DBモデル ---
 
 // ユーザーが登録したスタンプ
@@ -109,6 +112,18 @@ func main() {
 	log.Println("Running initial message check...")
 	checkMessagesAndSendDM(db)
 
+	// ユーザー・スタンプ一覧は1時間ごとに更新
+	go func() {
+		log.Println("Starting hourly cache refresh...")
+
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+
+		for range ticker.C {
+			updateCache()
+		}
+	}()
+
 	// 定期実行バッチ
 	// 7分ごとに実行し、直近8分を見る
 	go func() {
@@ -120,7 +135,6 @@ func main() {
 		for range ticker.C {
 			log.Println("--- Triggered polling batch ---")
 
-			updateCache()
 			checkMessagesAndSendDM(db)
 
 			log.Println("--- Finished polling batch ---")
@@ -128,6 +142,11 @@ func main() {
 	}()
 
 	// --- Webページ & API ---
+	http.HandleFunc("/favicon.svg", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/svg+xml")
+		w.Write(faviconSVG)
+	})
+
 	http.HandleFunc("/icon.svg", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/svg+xml")
 		w.Write(iconSVG)
@@ -346,7 +365,7 @@ func main() {
 
 <title>ReaQtion</title>
 
-<link rel="icon" href="/icon.svg">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
 
 <style>
   body {
