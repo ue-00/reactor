@@ -7,6 +7,7 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -21,6 +22,11 @@ var (
 	userCache     = map[string]string{} // traQ ID -> UUID
 	stampCache    = map[string]string{} // Stamp Name -> UUID
 	stampIdToName = map[string]string{} // UUID -> Stamp Name
+
+	// 安全のためにタイムアウトを設定したHTTPクライアント
+	httpClient = &http.Client{
+		Timeout: 10 * time.Second,
+	}
 )
 
 // --- DBモデル ---
@@ -190,7 +196,7 @@ func updateCache() {
 	// ユーザー一覧の取得
 	reqU, _ := http.NewRequest("GET", baseURL+"/users", nil)
 	reqU.Header.Set("Authorization", "Bearer "+botToken)
-	if resp, err := http.DefaultClient.Do(reqU); err == nil {
+	if resp, err := httpClient.Do(reqU); err == nil {
 		defer resp.Body.Close()
 		var users []User
 		if json.NewDecoder(resp.Body).Decode(&users) == nil {
@@ -208,7 +214,7 @@ func updateCache() {
 	// スタンプ一覧の取得
 	reqS, _ := http.NewRequest("GET", baseURL+"/stamps", nil)
 	reqS.Header.Set("Authorization", "Bearer "+botToken)
-	if resp, err := http.DefaultClient.Do(reqS); err == nil {
+	if resp, err := httpClient.Do(reqS); err == nil {
 		defer resp.Body.Close()
 		var stamps []Stamp
 		if json.NewDecoder(resp.Body).Decode(&stamps) == nil {
@@ -226,14 +232,20 @@ func updateCache() {
 }
 
 func checkMessagesAndSendDM(db *gorm.DB) {
-	// 15分前の時刻をRFC3339で指定
+	// 15分前の時刻をRFC3339（UTC）で指定
 	since := time.Now().Add(-15 * time.Minute).UTC().Format(time.RFC3339)
-	url := fmt.Sprintf("%s/search/messages?limit=100&q=created:>=%s", baseURL, since)
-	log.Printf("Fetching messages since: %s", since)
 
-	req, _ := http.NewRequest("GET", url, nil)
+	// 正しいエンドポイントは /api/v3/messages
+	v := url.Values{}
+	v.Add("limit", "100")
+	v.Add("after", since) // 指定時刻以降のメッセージを抽出
+
+	searchURL := fmt.Sprintf("%s/messages?%s", baseURL, v.Encode())
+	log.Printf("Fetching messages URL: %s", searchURL)
+
+	req, _ := http.NewRequest("GET", searchURL, nil)
 	req.Header.Set("Authorization", "Bearer "+botToken)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		log.Println("Search API error:", err)
 		return
@@ -250,7 +262,16 @@ func checkMessagesAndSendDM(db *gorm.DB) {
 
 	// 取得したメッセージ群からスタンプを検証
 	for _, hit := range searchRes.Hits {
+		// 同じメッセージ内で同一スタンプが複数回押された場合の重複通知を防ぐマップ
+		seenStamps := map[string]bool{}
+
 		for _, s := range hit.Stamps {
+			// すでに処理したスタンプIDならスキップ
+			if seenStamps[s.StampID] {
+				continue
+			}
+			seenStamps[s.StampID] = true
+
 			var targets []UserStamp
 			db.Where("stamp_id = ?", s.StampID).Find(&targets)
 			if len(targets) > 0 {
@@ -279,7 +300,7 @@ func sendDM(userUUID, content string) {
 	req.Header.Set("Authorization", "Bearer "+botToken)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err == nil {
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			log.Printf("Successfully sent DM to %s", userUUID)
