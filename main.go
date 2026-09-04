@@ -18,6 +18,7 @@ import (
 
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 var (
@@ -95,14 +96,17 @@ func main() {
 		os.Getenv("NS_MARIADB_DATABASE"),
 	)
 
-	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
+	// SQLログにユーザーID・登録内容・通知履歴を出さない。
+	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
 	if err != nil {
-		log.Fatalf("failed to connect database: %v", err)
+		// log.Fatalf("failed to connect database: %v", err)
+		log.Fatal("failed to connect database")
 	}
 
 	// DBマイグレーション
 	if err := db.AutoMigrate(&UserStamp{}, &NotificationLog{}); err != nil {
-		log.Fatalf("failed to migrate database: %v", err)
+		// log.Fatalf("failed to migrate database: %v", err)
+		log.Fatal("failed to migrate database")
 	}
 
 	log.Println("Database connection and migration successful.")
@@ -164,7 +168,8 @@ func main() {
 		// =========================
 		if r.Method == http.MethodPost {
 			if err := r.ParseForm(); err != nil {
-				log.Printf("Failed to parse form: %v", err)
+				// log.Printf("Failed to parse form: %v", err)
+				log.Println("Failed to parse form")
 
 				http.Redirect(
 					w,
@@ -180,20 +185,20 @@ func main() {
 				strings.Trim(r.FormValue("stamp_name"), ":"),
 			)
 
-			log.Printf(
-				"Received registration request from user:%s for stamp:%s",
-				traqID,
-				stampName,
-			)
+			// log.Printf(
+			// "Received registration request from user:%s for stamp:%s",
+			// traqID,
+			// stampName,
+			// )
 
 			// スタンプ名からUUIDを取得
 			stampID, ok := getStampID(stampName)
 
 			if !ok {
-				log.Printf(
-					"Stamp:%s not found in cache",
-					stampName,
-				)
+				// log.Printf(
+				// "Stamp:%s not found in cache",
+				// stampName,
+				// )
 
 				// エラーメッセージを表示
 				http.Redirect(
@@ -216,10 +221,11 @@ func main() {
 				).
 				Count(&count).Error; err != nil {
 
-				log.Printf(
-					"Failed to check existing stamp registration: %v",
-					err,
-				)
+				// log.Printf(
+				// "Failed to check existing stamp registration: %v",
+				// err,
+				// )
+				log.Println("Failed to check existing stamp registration")
 
 				http.Redirect(
 					w,
@@ -232,11 +238,11 @@ func main() {
 
 			// すでに登録済み
 			if count > 0 {
-				log.Printf(
-					"Stamp:%s is already registered for user:%s",
-					stampName,
-					traqID,
-				)
+				// log.Printf(
+				// "Stamp:%s is already registered for user:%s",
+				// stampName,
+				// traqID,
+				// )
 
 				http.Redirect(
 					w,
@@ -254,12 +260,13 @@ func main() {
 			}
 
 			if err := db.Create(record).Error; err != nil {
-				log.Printf(
-					"Failed to register stamp:%s for user:%s: %v",
-					stampName,
-					traqID,
-					err,
-				)
+				// log.Printf(
+				// "Failed to register stamp:%s for user:%s: %v",
+				// stampName,
+				// traqID,
+				// err,
+				// )
+				log.Println("Failed to register stamp")
 
 				http.Redirect(
 					w,
@@ -270,12 +277,12 @@ func main() {
 				return
 			}
 
-			log.Printf(
-				"Successfully registered stamp:%s (ID:%s) for user:%s",
-				stampName,
-				stampID,
-				traqID,
-			)
+			// log.Printf(
+			// "Successfully registered stamp:%s (ID:%s) for user:%s",
+			// stampName,
+			// stampID,
+			// traqID,
+			// )
 
 			http.Redirect(
 				w,
@@ -323,11 +330,12 @@ func main() {
 			Where("traq_id = ?", traqID).
 			Find(&userStamps).Error; err != nil {
 
-			log.Printf(
-				"Failed to fetch registered stamps for user:%s: %v",
-				traqID,
-				err,
-			)
+			// log.Printf(
+			// "Failed to fetch registered stamps for user:%s: %v",
+			// traqID,
+			// err,
+			// )
+			log.Println("Failed to fetch registered stamps")
 
 			http.Error(
 				w,
@@ -777,10 +785,11 @@ func main() {
 
 		t, err := template.New("web").Parse(tmpl)
 		if err != nil {
-			log.Printf(
-				"Failed to parse template: %v",
-				err,
-			)
+			// log.Printf(
+			// "Failed to parse template: %v",
+			// err,
+			// )
+			log.Println("Failed to parse template")
 
 			http.Error(
 				w,
@@ -800,10 +809,11 @@ func main() {
 				"StatusClass":   statusClass,
 			},
 		); err != nil {
-			log.Printf(
-				"Failed to execute template: %v",
-				err,
-			)
+			// log.Printf(
+			// "Failed to execute template: %v",
+			// err,
+			// )
+			log.Println("Failed to execute template")
 		}
 	})
 
@@ -817,11 +827,11 @@ func main() {
 		if r.Method == http.MethodPost {
 			id := r.FormValue("id")
 
-			log.Printf(
-				"Received delete request from user:%s for record ID:%s",
-				traqID,
-				id,
-			)
+			// log.Printf(
+			// "Received delete request from user:%s for record ID:%s",
+			// traqID,
+			// id,
+			// )
 
 			if err := db.
 				Where(
@@ -831,10 +841,11 @@ func main() {
 				).
 				Delete(&UserStamp{}).Error; err != nil {
 
-				log.Printf(
-					"Failed to delete stamp registration: %v",
-					err,
-				)
+				// log.Printf(
+				// "Failed to delete stamp registration: %v",
+				// err,
+				// )
+				log.Println("Failed to delete stamp registration")
 			}
 		}
 
@@ -917,10 +928,11 @@ func updateCache() {
 	)
 
 	if err != nil {
-		log.Printf(
-			"Failed to create users request: %v",
-			err,
-		)
+		// log.Printf(
+		// "Failed to create users request: %v",
+		// err,
+		// )
+		log.Println("Failed to create users request")
 	} else {
 		reqU.Header.Set(
 			"Authorization",
@@ -930,10 +942,11 @@ func updateCache() {
 		resp, err := httpClient.Do(reqU)
 
 		if err != nil {
-			log.Printf(
-				"Failed to fetch users: %v",
-				err,
-			)
+			// log.Printf(
+			// "Failed to fetch users: %v",
+			// err,
+			// )
+			log.Println("Failed to fetch users")
 		} else {
 			if resp.StatusCode < 200 ||
 				resp.StatusCode >= 300 {
@@ -954,10 +967,11 @@ func updateCache() {
 				resp.Body.Close()
 
 				if err != nil {
-					log.Printf(
-						"Failed to decode users response: %v",
-						err,
-					)
+					// log.Printf(
+					// "Failed to decode users response: %v",
+					// err,
+					// )
+					log.Println("Failed to decode users response")
 				} else {
 					for _, u := range users {
 						newUserCache[u.Name] = u.ID
@@ -990,10 +1004,11 @@ func updateCache() {
 	)
 
 	if err != nil {
-		log.Printf(
-			"Failed to create stamps request: %v",
-			err,
-		)
+		// log.Printf(
+		// "Failed to create stamps request: %v",
+		// err,
+		// )
+		log.Println("Failed to create stamps request")
 	} else {
 		reqS.Header.Set(
 			"Authorization",
@@ -1003,10 +1018,11 @@ func updateCache() {
 		resp, err := httpClient.Do(reqS)
 
 		if err != nil {
-			log.Printf(
-				"Failed to fetch stamps: %v",
-				err,
-			)
+			// log.Printf(
+			// "Failed to fetch stamps: %v",
+			// err,
+			// )
+			log.Println("Failed to fetch stamps")
 		} else {
 			if resp.StatusCode < 200 ||
 				resp.StatusCode >= 300 {
@@ -1027,10 +1043,11 @@ func updateCache() {
 				resp.Body.Close()
 
 				if err != nil {
-					log.Printf(
-						"Failed to decode stamps response: %v",
-						err,
-					)
+					// log.Printf(
+					// "Failed to decode stamps response: %v",
+					// err,
+					// )
+					log.Println("Failed to decode stamps response")
 				} else {
 					for _, s := range stamps {
 						newStampCache[s.Name] = s.ID
@@ -1093,11 +1110,12 @@ func checkMessagesAndSendDM(db *gorm.DB) {
 		v.Set("offset", fmt.Sprint(offset))
 		result, err := fetchMessagePage(v)
 		if err != nil {
-			log.Printf("Failed to search messages (offset=%d): %v", offset, err)
+			// log.Printf("Failed to search messages (offset=%d): %v", offset, err)
+			log.Println("Failed to search messages")
 			return
 		}
-		log.Printf("Found %d messages in the last 31 minutes (offset=%d, totalHits=%d)",
-			len(result.Hits), offset, result.TotalHits)
+		// log.Printf("Found %d messages in the last 31 minutes (offset=%d, totalHits=%d)",
+		// len(result.Hits), offset, result.TotalHits)
 		for _, msg := range result.Hits {
 			processMessage(db, msg)
 		}
@@ -1110,7 +1128,7 @@ func checkMessagesAndSendDM(db *gorm.DB) {
 func fetchMessagePage(v url.Values) (MessageSearchResponse, error) {
 	var result MessageSearchResponse
 	searchURL := fmt.Sprintf("%s/messages?%s", baseURL, v.Encode())
-	log.Printf("Fetching messages URL: %s", searchURL)
+	// log.Printf("Fetching messages URL: %s", searchURL)
 	req, err := http.NewRequest(http.MethodGet, searchURL, nil)
 	if err != nil {
 		return result, fmt.Errorf("create request: %w", err)
@@ -1163,12 +1181,13 @@ func processMessage(
 			).
 			Find(&targets).Error; err != nil {
 
-			log.Printf(
-				"Failed to find users for stamp:%s on message:%s: %v",
-				s.StampID,
-				msg.ID,
-				err,
-			)
+			// log.Printf(
+			// "Failed to find users for stamp:%s on message:%s: %v",
+			// s.StampID,
+			// msg.ID,
+			// err,
+			// )
+			log.Println("Failed to find users")
 			continue
 		}
 
@@ -1177,10 +1196,10 @@ func processMessage(
 		)
 
 		if !ok {
-			log.Printf(
-				"Stamp name not found for stamp ID:%s",
-				s.StampID,
-			)
+			// log.Printf(
+			// "Stamp name not found for stamp ID:%s",
+			// s.StampID,
+			// )
 			continue
 		}
 
@@ -1227,21 +1246,22 @@ func sendNotificationToUser(
 		).
 		Count(&count).Error; err != nil {
 
-		log.Printf(
-			"Failed to check notification log for user:%s message:%s: %v",
-			traqID,
-			msg.ID,
-			err,
-		)
+		// log.Printf(
+		// "Failed to check notification log for user:%s message:%s: %v",
+		// traqID,
+		// msg.ID,
+		// err,
+		// )
+		log.Println("Failed to check notification log")
 		return
 	}
 
 	if count > 0 {
-		log.Printf(
-			"Notification already sent to user:%s for message:%s",
-			traqID,
-			msg.ID,
-		)
+		// log.Printf(
+		// "Notification already sent to user:%s for message:%s",
+		// traqID,
+		// msg.ID,
+		// )
 		return
 	}
 
@@ -1249,10 +1269,10 @@ func sendNotificationToUser(
 	userUUID, ok := getUserUUID(traqID)
 
 	if !ok {
-		log.Printf(
-			"User UUID not found for traq_id:%s",
-			traqID,
-		)
+		// log.Printf(
+		// "User UUID not found for traq_id:%s",
+		// traqID,
+		// )
 		return
 	}
 
@@ -1267,13 +1287,13 @@ func sendNotificationToUser(
 		msg.ID,
 	)
 
-	log.Printf(
-		"Sending DM to user:%s (UUID:%s) with stamps [%s] for message:%s",
-		traqID,
-		userUUID,
-		stampsText,
-		msg.ID,
-	)
+	// log.Printf(
+	// "Sending DM to user:%s (UUID:%s) with stamps [%s] for message:%s",
+	// traqID,
+	// userUUID,
+	// stampsText,
+	// msg.ID,
+	// )
 
 	// DM送信に成功した場合だけ通知済みとして記録
 	if !sendDM(
@@ -1292,20 +1312,21 @@ func sendNotificationToUser(
 		notificationLog,
 	).Error; err != nil {
 
-		log.Printf(
-			"Failed to save notification log for user:%s message:%s: %v",
-			traqID,
-			msg.ID,
-			err,
-		)
+		// log.Printf(
+		// "Failed to save notification log for user:%s message:%s: %v",
+		// traqID,
+		// msg.ID,
+		// err,
+		// )
+		log.Println("Failed to save notification log")
 		return
 	}
 
-	log.Printf(
-		"Notification log saved for user:%s message:%s",
-		traqID,
-		msg.ID,
-	)
+	// log.Printf(
+	// "Notification log saved for user:%s message:%s",
+	// traqID,
+	// msg.ID,
+	// )
 }
 
 // ============================================================
@@ -1330,11 +1351,12 @@ func sendDM(
 	)
 
 	if err != nil {
-		log.Printf(
-			"Failed to encode DM body for %s: %v",
-			userUUID,
-			err,
-		)
+		// log.Printf(
+		// "Failed to encode DM body for %s: %v",
+		// userUUID,
+		// err,
+		// )
+		log.Println("Failed to encode DM body")
 		return false
 	}
 
@@ -1345,11 +1367,12 @@ func sendDM(
 	)
 
 	if err != nil {
-		log.Printf(
-			"Failed to create DM request for %s: %v",
-			userUUID,
-			err,
-		)
+		// log.Printf(
+		// "Failed to create DM request for %s: %v",
+		// userUUID,
+		// err,
+		// )
+		log.Println("Failed to create DM request")
 		return false
 	}
 
@@ -1366,11 +1389,12 @@ func sendDM(
 	resp, err := httpClient.Do(req)
 
 	if err != nil {
-		log.Printf(
-			"Error sending DM to %s: %v",
-			userUUID,
-			err,
-		)
+		// log.Printf(
+		// "Error sending DM to %s: %v",
+		// userUUID,
+		// err,
+		// )
+		log.Println("Error sending DM")
 
 		return false
 	}
@@ -1380,10 +1404,10 @@ func sendDM(
 	if resp.StatusCode >= 200 &&
 		resp.StatusCode < 300 {
 
-		log.Printf(
-			"Successfully sent DM to %s",
-			userUUID,
-		)
+		// log.Printf(
+		// "Successfully sent DM to %s",
+		// userUUID,
+		// )
 
 		// APIへの連続アクセスを少し間隔を空ける
 		time.Sleep(100 * time.Millisecond)
@@ -1391,11 +1415,12 @@ func sendDM(
 		return true
 	}
 
-	log.Printf(
-		"Failed to send DM to %s, Status Code: %d",
-		userUUID,
-		resp.StatusCode,
-	)
+	// log.Printf(
+	// "Failed to send DM to %s, Status Code: %d",
+	// userUUID,
+	// resp.StatusCode,
+	// )
+	log.Println("Failed to send DM")
 
 	time.Sleep(100 * time.Millisecond)
 
@@ -1441,13 +1466,14 @@ func serveStampImage(w http.ResponseWriter, r *http.Request) {
 	req.Header.Set("Authorization", "Bearer "+botToken)
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		log.Printf("Failed to fetch stamp image %s: %v", stampID, err)
+		// log.Printf("Failed to fetch stamp image %s: %v", stampID, err)
+		log.Println("Failed to fetch stamp image")
 		http.Error(w, "Image fetch failed", http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		log.Printf("Stamp image %s returned status %d", stampID, resp.StatusCode)
+		// log.Printf("Stamp image %s returned status %d", stampID, resp.StatusCode)
 		if resp.StatusCode == http.StatusNotFound {
 			http.NotFound(w, r)
 		} else {
