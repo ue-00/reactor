@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"embed"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -33,6 +34,9 @@ var (
 		Timeout: 10 * time.Second,
 	}
 )
+
+//go:embed icon.svg
+var iconSVG []byte
 
 // --- DBモデル ---
 
@@ -124,6 +128,10 @@ func main() {
 	}()
 
 	// --- Webページ & API ---
+	http.HandleFunc("/icon.svg", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/svg+xml")
+		w.Write(iconSVG)
+	})
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		// NeoShowcaseのHard認証によって付与されるヘッダー
@@ -338,7 +346,7 @@ func main() {
 
 <title>ReaQtion</title>
 
-<link rel="icon" href="icon.svg">
+<link rel="icon" href="/icon.svg">
 
 <style>
   body {
@@ -511,7 +519,7 @@ func main() {
 
   <h1 class="title">
     <img
-      src="icon.svg"
+      src="/icon.svg"
       alt="icon"
       class="title-icon"
     >
