@@ -298,7 +298,7 @@ func main() {
 			statusClass = "success"
 
 		case "not_found":
-			statusMessage = "スタンプ名が違います。正しいスタンプ名を入力してください。"
+			statusMessage = "スタンプ名が違う、または追加されたばかりのスタンプです。1時間ほど待ってから再度お試しください。"
 			statusClass = "error"
 
 		case "already":
@@ -335,8 +335,9 @@ func main() {
 		}
 
 		type StampInfo struct {
-			ID   uint
-			Name string
+			ImageURL string
+			ID       uint
+			Name     string
 		}
 
 		var stamps []StampInfo
@@ -349,8 +350,9 @@ func main() {
 			}
 
 			stamps = append(stamps, StampInfo{
-				ID:   us.ID,
-				Name: stampName,
+				ID:       us.ID,
+				Name:     stampName,
+				ImageURL: baseURL + "/stamps/" + url.PathEscape(us.StampID) + "/image",
 			})
 		}
 
@@ -483,6 +485,14 @@ func main() {
     box-sizing: border-box;
   }
 
+  .stamp-image {
+    width: 40px;
+    height: 40px;
+    flex-shrink: 0;
+    object-fit: contain;
+    margin-right: 12px;
+  }
+
   .stamp-name {
     flex-grow: 1;
     min-width: 0;
@@ -585,6 +595,15 @@ func main() {
 
         <li class="stamp-item">
 
+          <img
+            class="stamp-image"
+            src="{{.ImageURL}}"
+            alt=""
+            width="40"
+            height="40"
+            loading="lazy"
+            onerror="this.hidden = true"
+          >
           <span class="stamp-name">
             :{{.Name}}:
           </span>
