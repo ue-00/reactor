@@ -52,9 +52,9 @@ type UserStamp struct {
 
 // 同じメッセージを同じユーザーへ二重通知しないための記録
 type NotificationLog struct {
-	ID        uint      `gorm:"primaryKey"`
-	MessageID string    `gorm:"uniqueIndex:idx_message_user;size:36"`
-	TraqID    string    `gorm:"uniqueIndex:idx_message_user;size:36"`
+	ID        uint   `gorm:"primaryKey"`
+	MessageID string `gorm:"uniqueIndex:idx_message_user;size:36"`
+	TraqID    string `gorm:"uniqueIndex:idx_message_user;size:36"`
 	CreatedAt time.Time
 }
 
@@ -108,7 +108,7 @@ func main() {
 	// 初回キャッシュ取得
 	updateCache()
 
-	// 起動直後にも直近8分のメッセージをチェック
+	// 起動直後にも直近31分のメッセージをチェック
 	log.Println("Running initial message check...")
 	checkMessagesAndSendDM(db)
 
@@ -125,11 +125,11 @@ func main() {
 	}()
 
 	// 定期実行バッチ
-	// 7分ごとに実行し、直近8分を見る
+	// 30分ごとに実行し、直近31分を見る
 	go func() {
 		log.Println("Starting 7-minute polling batch...")
 
-		ticker := time.NewTicker(7 * time.Minute)
+		ticker := time.NewTicker(30 * time.Minute)
 		defer ticker.Stop()
 
 		for range ticker.C {
@@ -904,13 +904,14 @@ func updateCache() {
 // ============================================================
 
 func checkMessagesAndSendDM(db *gorm.DB) {
-	// 7分ごとに実行するが、
-	// 直近8分まで検索する。
+	// 30分ごとに実行するが、
+	// 直近31分まで検索する。
 	//
 	// 1分ぶん検索範囲を重複させることで、
 	// 実行タイミングのズレによる取りこぼしを防ぐ。
-	since := time.Now().
-		Add(-8 * time.Minute).
+	now := time.Now()
+	since := now.
+		Add(-31 * time.Minute).
 		UTC().
 		Format(time.RFC3339)
 
@@ -926,92 +927,55 @@ func checkMessagesAndSendDM(db *gorm.DB) {
 		since,
 	)
 
-	searchURL := fmt.Sprintf(
-		"%s/messages?%s",
-		baseURL,
-		v.Encode(),
-	)
+	// ページ取得中に新しい投稿が検索結果へ入らないよう上限を固定する。
+	v.Set("before", now.UTC().Format(time.RFC3339Nano))
+	v.Set("sort", "-createdAt")
 
-	log.Printf(
-		"Fetching messages URL: %s",
-		searchURL,
-	)
-
-	req, err := http.NewRequest(
-		http.MethodGet,
-		searchURL,
-		nil,
-	)
-
-	if err != nil {
-		log.Printf(
-			"Failed to create messages request: %v",
-			err,
-		)
-		return
+	for offset := 0; ; offset += 100 {
+		// 検索APIで指定できるoffsetの最大値は9900。
+		if offset > 9900 {
+			log.Printf("Message search reached the API pagination limit (10000 messages)")
+			return
+		}
+		v.Set("offset", fmt.Sprint(offset))
+		result, err := fetchMessagePage(v)
+		if err != nil {
+			log.Printf("Failed to search messages (offset=%d): %v", offset, err)
+			return
+		}
+		log.Printf("Found %d messages in the last 31 minutes (offset=%d, totalHits=%d)",
+			len(result.Hits), offset, result.TotalHits)
+		for _, msg := range result.Hits {
+			processMessage(db, msg)
+		}
+		if len(result.Hits) < 100 {
+			return
+		}
 	}
+}
 
-	req.Header.Set(
-		"Authorization",
-		"Bearer "+botToken,
-	)
-
-	resp, err := httpClient.Do(req)
-
-	if err != nil {
-		log.Printf(
-			"Search API error: %v",
-			err,
-		)
-		return
-	}
-
-	defer resp.Body.Close()
-
-	// HTTPステータスチェック
-	if resp.StatusCode < 200 ||
-		resp.StatusCode >= 300 {
-
-		log.Printf(
-			"Search API returned status: %d",
-			resp.StatusCode,
-		)
-		return
-	}
-
-	// APIレスポンス:
-	//
-	// {
-	//   "totalHits": 10000,
-	//   "hits": [...]
-	// }
+func fetchMessagePage(v url.Values) (MessageSearchResponse, error) {
 	var result MessageSearchResponse
-
-	if err := json.NewDecoder(
-		resp.Body,
-	).Decode(&result); err != nil {
-
-		log.Printf(
-			"Failed to decode messages response: %v",
-			err,
-		)
-		return
+	searchURL := fmt.Sprintf("%s/messages?%s", baseURL, v.Encode())
+	log.Printf("Fetching messages URL: %s", searchURL)
+	req, err := http.NewRequest(http.MethodGet, searchURL, nil)
+	if err != nil {
+		return result, fmt.Errorf("create request: %w", err)
 	}
-
-	messages := result.Hits
-
-	log.Printf(
-		"Found %d messages in the last 4 minutes (totalHits=%d)",
-		len(messages),
-		result.TotalHits,
-	)
-
-	for _, msg := range messages {
-		processMessage(
-			db,
-			msg,
-		)
+	req.Header.Set("Authorization", "Bearer "+botToken)
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return result, fmt.Errorf("search API: %w", err)
 	}
+	// 次のページを取得する前にレスポンスを閉じる。
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return result, fmt.Errorf("search API returned status: %d", resp.StatusCode)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return result, fmt.Errorf("decode response: %w", err)
+	}
+	return result, nil
 }
 
 // ============================================================
