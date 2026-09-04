@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -342,6 +343,13 @@ func main() {
 			Name     string
 		}
 
+		var candidates []Stamp
+		cacheMu.RLock()
+		for name, id := range stampCache {
+			candidates = append(candidates, Stamp{ID: id, Name: name})
+		}
+		cacheMu.RUnlock()
+		sort.Slice(candidates, func(i, j int) bool { return candidates[i].Name < candidates[j].Name })
 		var stamps []StampInfo
 
 		for _, us := range userStamps {
@@ -543,6 +551,9 @@ func main() {
       font-size: 21px;
     }
   }
+  #stamp-suggestions { max-height: 320px; overflow-y: auto; border: 1px solid #ddd; border-radius: 6px; margin-bottom: 16px; }
+  .stamp-option { display: flex; align-items: center; padding: 8px 12px; cursor: pointer; overflow-wrap: anywhere; }
+  .stamp-option[aria-selected="true"], .stamp-option:hover { background: #e8f1ff; }
 </style>
 </head>
 
@@ -572,6 +583,11 @@ func main() {
     <div class="form-group">
 
       <input
+        autocomplete="off"
+        role="combobox"
+        aria-autocomplete="list"
+        aria-controls="stamp-suggestions"
+        aria-expanded="false"
         id="stamp_name"
         name="stamp_name"
         placeholder="スタンプ名（例: oisu-）"
@@ -588,6 +604,7 @@ func main() {
     </div>
   </form>
 
+  <div id="stamp-suggestions" role="listbox" aria-label="スタンプ候補" hidden></div>
   <h2>登録済みスタンプ</h2>
 
   {{if .Stamps}}
@@ -641,6 +658,79 @@ func main() {
 
   {{end}}
 
+<script>
+(() => {
+  const stamps = {{.Candidates}} || [];
+  const input = document.getElementById('stamp_name');
+  const list = document.getElementById('stamp-suggestions');
+  let matches = [], active = -1, timer;
+  function close() {
+    clearTimeout(timer);
+    list.hidden = true;
+    input.setAttribute('aria-expanded', 'false');
+    input.removeAttribute('aria-activedescendant');
+    active = -1;
+  }
+  function select(index) {
+    input.value = matches[index].name;
+    close();
+    input.focus();
+  }
+  function render() {
+    const query = input.value.trim().replace(/^:+|:+$/g, '').toLowerCase();
+    close();
+    list.replaceChildren();
+    if (!query) return;
+    const prefix = [], partial = [];
+    for (const stamp of stamps) {
+      const name = stamp.name.toLowerCase();
+      if (name.startsWith(query)) prefix.push(stamp);
+      else if (name.includes(query)) partial.push(stamp);
+    }
+    matches = prefix.concat(partial).slice(0, 8);
+    matches.forEach((stamp, index) => {
+      const row = document.createElement('div');
+      row.className = 'stamp-option';
+      row.id = 'stamp-option-' + index;
+      row.setAttribute('role', 'option');
+      row.setAttribute('aria-selected', 'false');
+      const image = document.createElement('img');
+      image.className = 'stamp-image';
+      image.width = image.height = 40;
+      image.alt = '';
+      image.loading = 'lazy';
+      image.src = '/stamp-images/' + encodeURIComponent(stamp.id);
+      image.onerror = () => { image.hidden = true; };
+      const label = document.createElement('span');
+      label.textContent = ':' + stamp.name + ':';
+      row.append(image, label);
+      row.addEventListener('pointerdown', e => e.preventDefault());
+      row.addEventListener('click', () => select(index));
+      list.append(row);
+    });
+    list.hidden = matches.length === 0;
+    input.setAttribute('aria-expanded', String(!list.hidden));
+  }
+  input.addEventListener('input', () => {
+    close();
+    timer = setTimeout(render, 200);
+  });
+  input.addEventListener('keydown', e => {
+    if (e.isComposing) return;
+    if (e.key === 'Escape') { close(); return; }
+    if (list.hidden) return;
+    if (e.key === 'Enter' && active >= 0) { e.preventDefault(); select(active); }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      active = active < 0 ? (e.key === 'ArrowDown' ? 0 : matches.length - 1) : (active + (e.key === 'ArrowDown' ? 1 : -1) + matches.length) % matches.length;
+      Array.from(list.children).forEach((row, i) => row.setAttribute('aria-selected', String(i === active)));
+      input.setAttribute('aria-activedescendant', list.children[active].id);
+      list.children[active].scrollIntoView({block: 'nearest'});
+    }
+  });
+  input.addEventListener('blur', close);
+})();
+</script>
 </body>
 </html>`
 
@@ -664,6 +754,7 @@ func main() {
 			map[string]interface{}{
 				"TraqID":        traqID,
 				"Stamps":        stamps,
+				"Candidates":    candidates,
 				"StatusMessage": statusMessage,
 				"StatusClass":   statusClass,
 			},
@@ -1270,6 +1361,15 @@ func sendDM(
 	return false
 }
 
+type cachedStampImage struct {
+	data        []byte
+	contentType string
+	expires     time.Time
+}
+
+var stampImageMu sync.Mutex
+var stampImages = map[string]cachedStampImage{}
+
 // スタンプ画像はBot認証で取得し、トークンをブラウザへ渡さない。
 func serveStampImage(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get("X-Showcase-User") == "" {
@@ -1279,6 +1379,16 @@ func serveStampImage(w http.ResponseWriter, r *http.Request) {
 	stampID := r.PathValue("stampID")
 	if _, ok := getStampName(stampID); !ok {
 		http.NotFound(w, r)
+		return
+	}
+	// 同時アクセスでも同じ画像を重複取得しない。キャッシュは最大128件。
+	stampImageMu.Lock()
+	defer stampImageMu.Unlock()
+	if cached, ok := stampImages[stampID]; ok && time.Now().Before(cached.expires) {
+		w.Header().Set("Content-Type", cached.contentType)
+		w.Header().Set("Cache-Control", "private, max-age=3600")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Write(cached.data)
 		return
 	}
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet,
@@ -1309,10 +1419,24 @@ func serveStampImage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid image response", http.StatusBadGateway)
 		return
 	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, (2<<20)+1))
+	if err != nil || len(data) > 2<<20 {
+		http.Error(w, "Invalid image response", http.StatusBadGateway)
+		return
+	}
+	if len(stampImages) >= 128 {
+		var oldestID string
+		var oldest time.Time
+		for id, cached := range stampImages {
+			if oldestID == "" || cached.expires.Before(oldest) {
+				oldestID, oldest = id, cached.expires
+			}
+		}
+		delete(stampImages, oldestID)
+	}
+	stampImages[stampID] = cachedStampImage{data: data, contentType: contentType, expires: time.Now().Add(time.Hour)}
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Cache-Control", "private, max-age=3600")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	if _, err := io.Copy(w, resp.Body); err != nil {
-		log.Printf("Failed to write stamp image %s: %v", stampID, err)
-	}
+	w.Write(data)
 }
