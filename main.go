@@ -101,16 +101,16 @@ func main() {
 	// 初回キャッシュ取得
 	updateCache()
 
-	// 起動直後にも直近4分のメッセージをチェック
+	// 起動直後にも直近8分のメッセージをチェック
 	log.Println("Running initial message check...")
 	checkMessagesAndSendDM(db)
 
 	// 定期実行バッチ
-	// 3分ごとに実行し、直近4分を見る
+	// 7分ごとに実行し、直近8分を見る
 	go func() {
-		log.Println("Starting 3-minute polling batch...")
+		log.Println("Starting 7-minute polling batch...")
 
-		ticker := time.NewTicker(3 * time.Minute)
+		ticker := time.NewTicker(7 * time.Minute)
 		defer ticker.Stop()
 
 		for range ticker.C {
@@ -336,7 +336,7 @@ func main() {
 <head>
 <meta charset="UTF-8">
 
-<title>スタンプDM通知Bot</title>
+<title>ReaQtion</title>
 
 <link rel="icon" href="icon.svg">
 
@@ -360,8 +360,7 @@ func main() {
   }
 
   .title-icon {
-    width: 32px;
-    height: 32px;
+    width: 256px;
     margin-right: 8px;
   }
 
@@ -516,7 +515,6 @@ func main() {
       alt="icon"
       class="title-icon"
     >
-    スタンプDM通知Bot
   </h1>
 
   <p class="description">
@@ -880,13 +878,13 @@ func updateCache() {
 // ============================================================
 
 func checkMessagesAndSendDM(db *gorm.DB) {
-	// 3分ごとに実行するが、
-	// 直近4分まで検索する。
+	// 7分ごとに実行するが、
+	// 直近8分まで検索する。
 	//
 	// 1分ぶん検索範囲を重複させることで、
 	// 実行タイミングのズレによる取りこぼしを防ぐ。
 	since := time.Now().
-		Add(-4 * time.Minute).
+		Add(-8 * time.Minute).
 		UTC().
 		Format(time.RFC3339)
 
