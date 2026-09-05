@@ -391,7 +391,7 @@ func main() {
   body {
     background: #f5f5f5;
     max-width: 800px;
-    margin: 0 auto;
+    margin: 32px auto;
     padding: 16px;
     box-sizing: border-box;
     font-family: sans-serif;
