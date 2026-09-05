@@ -114,7 +114,7 @@ func main() {
 	// 初回キャッシュ取得
 	updateCache()
 
-	// 起動直後にも直近31分のメッセージをチェック
+	// 起動直後にも直近3時間のメッセージをチェック
 	log.Println("Running initial message check...")
 	checkMessagesAndSendDM(db)
 
@@ -131,9 +131,9 @@ func main() {
 	}()
 
 	// 定期実行バッチ
-	// 30分ごとに実行し、直近31分を見る
+	// 30分ごとに実行し、直近3時間を見る
 	go func() {
-		log.Println("Starting 7-minute polling batch...")
+		log.Println("Starting 30-minute polling batch (3-hour lookback)...")
 
 		ticker := time.NewTicker(30 * time.Minute)
 		defer ticker.Stop()
@@ -1074,14 +1074,10 @@ func updateCache() {
 // ============================================================
 
 func checkMessagesAndSendDM(db *gorm.DB) {
-	// 30分ごとに実行するが、
-	// 直近31分まで検索する。
-	//
-	// 1分ぶん検索範囲を重複させることで、
-	// 実行タイミングのズレによる取りこぼしを防ぐ。
+	// 30分ごとに直近3時間を再検索し、後から付いたスタンプも確認する。
 	now := time.Now()
 	since := now.
-		Add(-31 * time.Minute).
+		Add(-3 * time.Hour).
 		UTC().
 		Format(time.RFC3339)
 
@@ -1114,7 +1110,7 @@ func checkMessagesAndSendDM(db *gorm.DB) {
 			log.Println("Failed to search messages")
 			return
 		}
-		// log.Printf("Found %d messages in the last 31 minutes (offset=%d, totalHits=%d)",
+		// log.Printf("Found %d messages in the last 3 hours (offset=%d, totalHits=%d)",
 		// len(result.Hits), offset, result.TotalHits)
 		for _, msg := range result.Hits {
 			processMessage(db, msg)
