@@ -55,10 +55,10 @@ type UserStamp struct {
 
 // 同じメッセージを同じユーザーへ二重通知しないための記録
 type NotificationLog struct {
-	ID        uint   `gorm:"primaryKey"`
-	MessageID string `gorm:"uniqueIndex:idx_message_user;size:36"`
-	TraqID    string `gorm:"uniqueIndex:idx_message_user;size:36"`
-	CreatedAt time.Time
+	ID        uint      `gorm:"primaryKey"`
+	MessageID string    `gorm:"uniqueIndex:idx_message_user;size:36"`
+	TraqID    string    `gorm:"uniqueIndex:idx_message_user;size:36"`
+	CreatedAt time.Time `gorm:"index"`
 }
 
 // --- APIレスポンス用構造体 ---
@@ -116,7 +116,7 @@ func main() {
 
 	// 起動直後にも直近3時間のメッセージをチェック
 	log.Println("Running initial message check...")
-	checkMessagesAndSendDM(db)
+	runMessageBatch(db)
 
 	// ユーザー・スタンプ一覧は1時間ごとに更新
 	go func() {
@@ -141,7 +141,7 @@ func main() {
 		for range ticker.C {
 			log.Println("--- Triggered polling batch ---")
 
-			checkMessagesAndSendDM(db)
+			runMessageBatch(db)
 
 			log.Println("--- Finished polling batch ---")
 		}
@@ -1072,6 +1072,20 @@ func updateCache() {
 // ============================================================
 // メッセージ検索・通知
 // ============================================================
+
+// 検索対象の3時間より長く履歴を保持し、二重通知を防ぐ。
+// 検索開始前に削除することで、長時間のバッチ中も必要な履歴を保持する。
+func runMessageBatch(db *gorm.DB) {
+	if err := deleteExpiredNotificationLogs(db, time.Now()); err != nil {
+		log.Println("Failed to delete expired notification logs")
+	}
+	checkMessagesAndSendDM(db)
+}
+
+func deleteExpiredNotificationLogs(db *gorm.DB, now time.Time) error {
+	return db.Where("created_at < ?", now.Add(-4*time.Hour)).
+		Delete(&NotificationLog{}).Error
+}
 
 func checkMessagesAndSendDM(db *gorm.DB) {
 	// 30分ごとに直近3時間を再検索し、後から付いたスタンプも確認する。
