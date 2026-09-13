@@ -141,6 +141,13 @@ func main() {
 		for range ticker.C {
 			log.Println("--- Triggered polling batch ---")
 
+			var userCount int64
+			if err := db.Model(&UserStamp{}).Distinct("traq_id").Count(&userCount).Error; err != nil {
+				log.Println("Failed to count registered users")
+			} else {
+				log.Printf("Registered users: %d", userCount)
+			}
+
 			runMessageBatch(db)
 
 			log.Println("--- Finished polling batch ---")
